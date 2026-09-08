@@ -1,4 +1,7 @@
-import { getDb } from '@/lib/db';
+import { createHash } from 'node:crypto';
+import { put } from '@vercel/blob';
+
+export const runtime = 'nodejs';
 export async function POST(request:Request) {
  const headers={'Cache-Control':'no-store'};
  const origin=request.headers.get('origin');
@@ -12,7 +15,16 @@ export async function POST(request:Request) {
   if(body.website) return Response.json({ok:true},{headers});
   const email=typeof body.email==='string'?body.email.trim().toLowerCase():'';
   if(email.length>254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !['sending','travelling','both'].includes(body.interest) || typeof body.beta!=='boolean') return Response.json({error:'Invalid signup details'},{status:400,headers});
-  await getDb().prepare('INSERT INTO waitlist (email, interest, beta, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(email) DO NOTHING').bind(email,body.interest,body.beta?1:0,new Date().toISOString()).run();
+  const emailKey=createHash('sha256').update(email).digest('hex');
+  await put(`waitlist/${emailKey}.json`,JSON.stringify({email,interest:body.interest,beta:body.beta,createdAt:new Date().toISOString()}),{
+   access:'private',
+   addRandomSuffix:false,
+   allowOverwrite:false,
+   contentType:'application/json',
+  }).catch((error:unknown)=>{
+   if(error instanceof Error && /already exists|conflict/i.test(error.message)) return;
+   throw error;
+  });
   return Response.json({ok:true},{headers});
  }catch{ return Response.json({error:'Signup temporarily unavailable'},{status:503,headers}); }
 }
